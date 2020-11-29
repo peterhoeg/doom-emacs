@@ -20,25 +20,26 @@ directives. By default, this only recognizes C directives.")
 ;; Set these defaults before `evil'; use `defvar' so they can be changed prior
 ;; to loading.
 (defvar evil-want-C-g-bindings t)
-(defvar evil-want-C-i-jump (or (daemonp) (display-graphic-p)))
+(defvar evil-want-C-i-jump nil)  ; we do this ourselves
 (defvar evil-want-C-u-scroll t)  ; moved the universal arg to <leader> u
 (defvar evil-want-C-u-delete t)
 (defvar evil-want-C-w-scroll t)
 (defvar evil-want-C-w-delete t)
 (defvar evil-want-Y-yank-to-eol t)
 (defvar evil-want-abbrev-expand-on-insert-exit nil)
+(defvar evil-respect-visual-line-mode nil)
 
 (use-package! evil
   :hook (doom-init-modules . evil-mode)
   :demand t
   :preface
-  (setq evil-want-visual-char-semi-exclusive t
-        evil-ex-search-vim-style-regexp t
+  (setq evil-ex-search-vim-style-regexp t
         evil-ex-visual-char-range t  ; column range for ex commands
         evil-mode-line-format 'nil
         ;; more vim-like behavior
         evil-symbol-word-search t
-        ;; cursor appearance
+        ;; if the current state is obvious from the cursor's color/shape, then
+        ;; we won't need superfluous indicators to do it instead.
         evil-default-cursor '+evil-default-cursor-fn
         evil-normal-state-cursor 'box
         evil-emacs-state-cursor  '(box +evil-emacs-cursor-fn)
@@ -66,16 +67,13 @@ directives. By default, this only recognizes C directives.")
   (put 'evil-define-key* 'lisp-indent-function 'defun)
 
   ;; stop copying each visual state move to the clipboard:
-  ;; https://bitbucket.org/lyro/evil/issue/336/osx-visual-state-copies-the-region-on
+  ;; https://github.com/emacs-evil/evil/issues/336
   ;; grokked from:
   ;; http://stackoverflow.com/questions/15873346/elisp-rename-macro
   (advice-add #'evil-visual-update-x-selection :override #'ignore)
 
   ;; Start help-with-tutorial in emacs state
   (advice-add #'help-with-tutorial :after (lambda (&rest _) (evil-emacs-state +1)))
-
-  ;; Allows you to click buttons without initiating a selection
-  (define-key evil-motion-state-map [down-mouse-1] nil)
 
   ;; Done in a hook to ensure the popup rules load as late as possible
   (add-hook! 'doom-init-modules-hook
@@ -118,6 +116,14 @@ directives. By default, this only recognizes C directives.")
 
 
   ;; --- evil hacks -------------------------
+  (after! eldoc
+    ;; Allow eldoc to trigger directly after changing modes
+    (eldoc-add-command 'evil-normal-state
+                       'evil-insert
+                       'evil-change
+                       'evil-delete
+                       'evil-replace))
+
   (unless noninteractive
     (setq save-silently t)
     (add-hook! 'after-save-hook
@@ -160,7 +166,7 @@ directives. By default, this only recognizes C directives.")
       (abort-recursive-edit)))
 
   ;; Make J (evil-join) remove comment delimiters when joining lines.
-  (advice-add #'evil-join :override #'+evil-join-a)
+  (advice-add #'evil-join :around #'+evil-join-a)
 
   ;; Prevent gw (`evil-fill') and gq (`evil-fill-and-move') from squeezing
   ;; spaces. It doesn't in vim, so it shouldn't in evil.
@@ -305,7 +311,7 @@ directives. By default, this only recognizes C directives.")
 
 (use-package! evil-escape
   :commands evil-escape
-  :after-call pre-command-hook
+  :hook (doom-first-input . evil-escape-mode)
   :init
   (setq evil-escape-excluded-states '(normal visual multiedit emacs motion)
         evil-escape-excluded-major-modes '(neotree-mode treemacs-mode vterm-mode)
@@ -313,15 +319,14 @@ directives. By default, this only recognizes C directives.")
         evil-escape-delay 0.15)
   (evil-define-key* '(insert replace visual operator) 'global "\C-g" #'evil-escape)
   :config
-  ;; no `evil-escape' in minibuffer, unless `evil-collection-setup-minibuffer'
-  ;; is enabled, where we could be in insert mode in the minibuffer.
+  ;; `evil-escape' in the minibuffer is more disruptive than helpful. That is,
+  ;; unless we have `evil-collection-setup-minibuffer' enabled, in which case we
+  ;; want the same behavior in insert mode as we do in normal buffers.
   (add-hook! 'evil-escape-inhibit-functions
     (defun +evil-inhibit-escape-in-minibuffer-fn ()
       (and (minibufferp)
            (or (not (bound-and-true-p evil-collection-setup-minibuffer))
-               (evil-normal-state-p)))))
-  ;; so that evil-escape-mode-hook runs, and can be toggled by evil-mc
-  (evil-escape-mode +1))
+               (evil-normal-state-p))))))
 
 
 (use-package! evil-exchange
@@ -346,20 +351,16 @@ directives. By default, this only recognizes C directives.")
 
 
 (use-package! evil-snipe
-  :commands (evil-snipe-mode
-             evil-snipe-override-mode
-             evil-snipe-local-mode
-             evil-snipe-override-local-mode)
-  :after-call pre-command-hook
+  :commands evil-snipe-local-mode evil-snipe-override-local-mode
+  :hook (doom-first-input . evil-snipe-override-mode)
+  :hook (doom-first-input . evil-snipe-mode)
   :init
   (setq evil-snipe-smart-case t
         evil-snipe-scope 'line
         evil-snipe-repeat-scope 'visible
         evil-snipe-char-fold t)
   :config
-  (pushnew! evil-snipe-disabled-modes 'Info-mode 'calc-mode 'treemacs-mode)
-  (evil-snipe-mode +1)
-  (evil-snipe-override-mode +1))
+  (pushnew! evil-snipe-disabled-modes 'Info-mode 'calc-mode 'treemacs-mode))
 
 
 (use-package! evil-surround
@@ -414,6 +415,7 @@ directives. By default, this only recognizes C directives.")
 ;;   zu{q,w} - undo last marking
 
 (map! :v  "@"     #'+evil:apply-macro
+      :m  [C-i]   #'evil-jump-forward
 
       ;; implement dictionary keybinds
       ;; evil already defines 'z=' to `ispell-word' = correct word at point
@@ -486,7 +488,9 @@ directives. By default, this only recognizes C directives.")
        :nv "K"   #'+lookup/documentation
        :nv "gd"  #'+lookup/definition
        :nv "gD"  #'+lookup/references
-       :nv "gf"  #'+lookup/file)
+       :nv "gf"  #'+lookup/file
+       :nv "gI"  #'+lookup/implementations
+       :nv "gA"  #'+lookup/assignments)
       (:when (featurep! :tools eval)
        :nv "gr"  #'+eval:region
        :n  "gR"  #'+eval/buffer
@@ -511,8 +515,8 @@ directives. By default, this only recognizes C directives.")
       :n  "zx"    #'kill-current-buffer
       :n  "ZX"    #'doom/save-and-kill-buffer
       ;; don't leave visual mode after shifting
-      :v  "<"     #'+evil/visual-dedent  ; vnoremap < <gv
-      :v  ">"     #'+evil/visual-indent  ; vnoremap > >gv
+      :v  "<"     #'+evil/shift-left  ; vnoremap < <gv
+      :v  ">"     #'+evil/shift-right  ; vnoremap > >gv
 
       ;; window management (prefix "C-w")
       (:map evil-window-map
@@ -522,6 +526,9 @@ directives. By default, this only recognizes C directives.")
        "C-k"     #'evil-window-up
        "C-l"     #'evil-window-right
        "C-w"     #'other-window
+       ;; Extra split commands
+       "S"       #'+evil/window-split-and-follow
+       "V"       #'+evil/window-vsplit-and-follow
        ;; Swapping windows
        "H"       #'+evil/window-move-left
        "J"       #'+evil/window-move-down
@@ -555,7 +562,7 @@ directives. By default, this only recognizes C directives.")
       :textobj "u" #'+evil:inner-url-txtobj            #'+evil:outer-url-txtobj
       :textobj "x" #'evil-inner-xml-attr               #'evil-outer-xml-attr
 
-      ;; evil-easymotion (see `+evil/easymotion')
+      ;; evil-easymotion
       (:after evil-easymotion
        :m "gs" evilem-map
        (:map evilem-map

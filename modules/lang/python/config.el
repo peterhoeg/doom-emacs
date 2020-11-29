@@ -27,7 +27,7 @@
       (set-eglot-client! 'python-mode '("Microsoft.Python.LanguageServer"))))
   :config
   (set-repl-handler! 'python-mode #'+python/open-repl :persist t)
-  (set-docsets! 'python-mode "Python 3" "NumPy" "SciPy")
+  (set-docsets! '(python-mode inferior-python-mode) "Python 3" "NumPy" "SciPy" "Pandas")
 
   (set-ligatures! 'python-mode
     ;; Functional
@@ -102,7 +102,7 @@
       (unless (or (bound-and-true-p lsp-mode)
                   (bound-and-true-p eglot--managed-mode)
                   (bound-and-true-p lsp--buffer-deferred)
-                  (not (executable-find python-shell-interpreter)))
+                  (not (executable-find python-shell-interpreter t)))
         (anaconda-mode +1))))
   :config
   (set-company-backend! 'anaconda-mode '(company-anaconda))
@@ -207,7 +207,7 @@
   (set-eval-handler! 'python-mode
     '((:command . (lambda () python-shell-interpreter))
       (:exec (lambda ()
-               (if-let* ((bin (executable-find "pipenv"))
+               (if-let* ((bin (executable-find "pipenv" t))
                          (_ (pipenv-project-p)))
                    (format "PIPENV_MAX_DEPTH=9999 %s run %%c %%o %%s %%a" bin)
                  "%c %o %s %a")))
@@ -243,8 +243,8 @@
   :when (featurep! +pyenv)
   :after python
   :config
-  (pyenv-mode +1)
   (when (executable-find "pyenv")
+    (pyenv-mode +1)
     (add-to-list 'exec-path (expand-file-name "shims" (or (getenv "PYENV_ROOT") "~/.pyenv"))))
   (add-hook 'python-mode-local-vars-hook #'+python-pyenv-mode-set-auto-h)
   (add-hook 'doom-switch-buffer-hook #'+python-pyenv-mode-set-auto-h))
@@ -290,6 +290,7 @@
   :when (featurep! +poetry)
   :after python
   :init
+  (setq poetry-tracking-strategy 'switch-buffer)
   (add-hook 'python-mode-hook #'poetry-tracking-mode))
 
 

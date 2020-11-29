@@ -44,6 +44,16 @@ following shell commands:
         (split-string stdout "\n" t)
       (error "Failed to check working tree in %s" dir))))
 
+(defun doom--get-straight-recipe ()
+  (with-temp-buffer
+    (insert-file-contents (doom-path doom-core-dir "packages.el"))
+    (when (re-search-forward "(package! straight" nil t)
+      (goto-char (match-beginning 0))
+      (let ((sexp (sexp-at-point)))
+        (plist-put sexp :recipe
+                   (eval (plist-get sexp :recipe)
+                         t))))))
+
 
 (defun doom-cli-upgrade (&optional auto-accept-p force-p)
   "Upgrade Doom to the latest version non-destructively."
@@ -58,7 +68,7 @@ following shell commands:
            (branch (replace-regexp-in-string
                     "^\\(?:[^/]+/[^/]+/\\)?\\(.+\\)\\(?:~[0-9]+\\)?$" "\\1"
                     (cdr (doom-call-process "git" "name-rev" "--name-only" "HEAD"))))
-           (target-remote (format "%s/%s" doom-repo-remote branch)))
+           (target-remote (format "%s_%s" doom-repo-remote branch)))
       (unless branch
         (error! (if (file-exists-p! ".git" doom-emacs-dir)
                     "Couldn't find Doom's .git directory. Was Doom cloned properly?"
@@ -80,7 +90,7 @@ following shell commands:
           (let (result)
             (or (zerop (car (doom-call-process "git" "remote" "add" doom-repo-remote doom-repo-url)))
                 (error "Failed to add %s to remotes" doom-repo-remote))
-            (or (zerop (car (setq result (doom-call-process "git" "fetch" "--tags" doom-repo-remote branch))))
+            (or (zerop (car (setq result (doom-call-process "git" "fetch" "--force" "--tags" doom-repo-remote (format "%s:%s" branch target-remote)))))
                 (error "Failed to fetch from upstream"))
 
             (let ((this-rev (cdr (doom-call-process "git" "rev-parse" "HEAD")))
@@ -100,7 +110,8 @@ following shell commands:
                               (substring new-rev 0 10)
                               (cdr (doom-call-process "git" "log" "-1" "--format=%cr" target-remote))))
                 (let ((diff-url
-                       (format "https://github.com/hlissner/doom-emacs/compare/%s...%s"
+                       (format "%s/compare/%s...%s"
+                               doom-repo-url
                                this-rev
                                new-rev)))
                   (print! "Link to diff: %s" diff-url)
@@ -115,10 +126,24 @@ following shell commands:
                   (print! (start "Upgrading Doom Emacs..."))
                   (print-group!
                    (doom-clean-byte-compiled-files)
-                   (or (and (zerop (car (doom-call-process "git" "reset" "--hard" target-remote)))
-                            (equal (cdr (doom-call-process "git" "rev-parse" "HEAD")) new-rev))
-                       (error "Failed to check out %s" (substring new-rev 0 10)))
+                   (let ((straight-recipe (doom--get-straight-recipe)))
+                     (or (and (zerop (car (doom-call-process "git" "reset" "--hard" target-remote)))
+                              (equal (cdr (doom-call-process "git" "rev-parse" "HEAD")) new-rev))
+                         (error "Failed to check out %s" (substring new-rev 0 10)))
+                     ;; HACK It's messy to use straight to upgrade straight, due
+                     ;;      to the potential for backwards incompatibility, so
+                     ;;      we staticly check if Doom's `package!' declaration
+                     ;;      for straight has changed. If it has, delete
+                     ;;      straight so 'doom upgrade's second stage will
+                     ;;      install the new version for us.
+                     ;;
+                     ;;      Clumsy, but a better solution is in the works.
+                     (unless (equal straight-recipe (doom--get-straight-recipe))
+                       (print! (info "Preparing straight for an update"))
+                       (delete-directory (doom-path straight-base-dir "straight/repos/straight.el")
+                                         'recursive)))
                    (print! (info "%s") (cdr result))
                    t))))))
         (ignore-errors
+          (doom-call-process "git" "branch" "-D" target-remote)
           (doom-call-process "git" "remote" "remove" doom-repo-remote))))))

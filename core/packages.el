@@ -3,7 +3,7 @@
 
 ;; core.el
 (package! auto-minor-mode :pin "17cfa1b54800fdef2975c0c0531dad34846a5065")
-(package! gcmh :pin "84c43a4c0b41a595ac6e299fa317d2831813e580")
+(package! gcmh :pin "0089f9c3a6d4e9a310d0791cf6fa8f35642ecfd9")
 (package! explain-pause-mode
   :recipe (:host github
            :repo "lastquestion/explain-pause-mode")
@@ -17,33 +17,28 @@
             :branch ,straight-repository-branch
             :local-repo "straight.el"
             :files ("straight*.el"))
-  :pin "728ea18ea590fcd8fb48f5bed30e135942d97221")
+  :pin "e46292db6910e8e7701d53acaf188de0101ae30f")
 
 ;; core-modules.el
 (package! use-package
   :type 'core
-  :pin "4fb1f9a68f1e7e7d614652afc017a6652fd029f1")
+  :pin "a7422fb8ab1baee19adb2717b5b47b9c3812a84c")
 
 ;; core-ui.el
-(package! all-the-icons :pin "6917b08f64dd8487e23769433d6cb9ba11f4152f")
+(package! all-the-icons :pin "d711dc10b2504c06500c171ea5860f15827fdb72")
 (package! hide-mode-line :pin "88888825b5b27b300683e662fa3be88d954b1cea")
 (package! highlight-numbers :pin "8b4744c7f46c72b1d3d599d4fb75ef8183dee307")
-(package! rainbow-delimiters :pin "f43d48a24602be3ec899345a3326ed0247b960c6")
-(package! restart-emacs :pin "9aa90d3df9e08bc420e1c9845ee3ff568e911bd9")
+(package! rainbow-delimiters :pin "d576e6694ad3a3e88b2bb1363305b38fa364c149")
+(package! restart-emacs :pin "1607da2bc657fe05ae01f7fdf26f716eafead02c")
 
 ;; core-editor.el
-(package! better-jumper :pin "fe548d22c9228b60d9c8a2a452a6c2e03dfdf238")
-(package! dtrt-indent :pin "50c440c80e0d15303d8ab543bce4c56e9c2bf407")
-(package! helpful :pin "1671e1dd08ca9543bf80e878135c6bbba84efe05")
+(package! better-jumper :pin "411ecdf6e7a3e1b4ced7605070d2309e5fc46556")
+(package! dtrt-indent :pin "9714f2c5f1c9b7c21e732df8c15a870a88caba84")
+(package! helpful :pin "7e4b1f0d5572a4e2b8ee7a9b084ef863d0315a73")
 (package! pcre2el :pin "0b5b2a2c173aab3fd14aac6cf5e90ad3bf58fa7d")
-(package! smartparens :pin "c59bfef7e8f1687ac77b0afaaaed86d8051d3de1")
-(package! so-long
-  :built-in 'prefer ; included in Emacs 27+
-  ;; REVIEW so-long is slated to be published to ELPA eventually, but until then
-  ;;        I've created my own mirror for it because git.savannah.gnu.org runs
-  ;;        on a potato.
-  :recipe (:host github :repo "hlissner/emacs-so-long")
-  :pin "ed666b0716f60e8988c455804de24b55919e71ca")
+(package! smartparens :pin "25f4d6d1b732f4deabf922059d22a0a7dc04bd0a")
+;; DEPRECATED Built into Emacs 27+; remove when we drop 26 support
+(package! so-long :built-in 'prefer :pin "1da43ed63b5f9a8188eb8107bbad842d10831537")
 (package! ws-butler
   ;; Use my fork of ws-butler, which has a few choice improvements and
   ;; optimizations (the original has been abandoned).
@@ -51,8 +46,9 @@
   :pin "2bb49d3ee7d2cba133bc7e9cdac416cd1c5e4fe0")
 
 ;; core-projects.el
-(package! projectile :pin "3670ebea092c7bae4973f5bcecf5ac3588a0ac60")
+(package! projectile :pin "35c6f9898272796694d04ab4fc4fbc85751e6b44")
+(package! project :pin "ef2d4879d70a757e4c23c50a35c5a386eca910ed")
 
 ;; core-keybinds.el
 (package! general :pin "a0b17d207badf462311b2eef7c065b884462cb7c")
-(package! which-key :pin "ae59b7edb0d82aa0251803fdfbde6b865083c8b8")
+(package! which-key :pin "5fb30301cb3b4fca5a0e1ce8ec1ef59290b79199")

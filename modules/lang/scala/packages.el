@@ -1,8 +1,8 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; lang/scala/packages.el
 
-(package! sbt-mode :pin "4358ed862a1b1ec18ac9699afb4862146669eb79")
-(package! scala-mode :pin "1d08e885b1489313666c7f15a3962432a4f757ee")
+(package! sbt-mode :pin "0bdc36ba3b3955c1106a5cda69be98bd38195cb6")
+(package! scala-mode :pin "1ab5f645606e40db07b813a1600835d1442c060a")
 
 (when (featurep! +lsp)
-  (package! lsp-metals :pin "e42c0b2448847f5de8ae73beae4dd695b560c4e0"))
+  (package! lsp-metals :pin "51a89c1861eb505882c20393227f303ac33276e4"))

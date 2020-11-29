@@ -6,7 +6,7 @@
   (set-repl-handler! 'julia-mode #'+julia/open-repl)
 
   ;; Borrow matlab.el's fontification of math operators. From
-  ;; <https://ogbe.net/emacsconfig.html>
+  ;; <https://web.archive.org/web/20170326183805/https://ogbe.net/emacsconfig.html>
   (dolist (mode '(julia-mode ess-julia-mode))
     (font-lock-add-keywords
      mode
@@ -65,10 +65,37 @@
     (term-set-escape-char ?\C-c)))
 
 
+(when (featurep! +lsp)
+  (add-hook 'julia-mode-local-vars-hook #'lsp!))
+
+
 (use-package! lsp-julia
   :when (featurep! +lsp)
+  :unless (featurep! :tools lsp +eglot)
   :after lsp-mode
+  :preface (setq lsp-julia-default-environment nil)
+  :init
+  ;; If no environment is set, then auto-detect one in ~/.julia/environments/,
+  ;; falling back to `lsp-julia-default-environment's default.
+  (unless lsp-julia-default-environment
+    (setq lsp-julia-default-environment
+          (or (car (last (doom-glob "~/.julia/environments/v*")))
+              "~/.julia/environments/v1.0")))
+  :config
+  ;; See non-Jedi/lsp-julia#35
+  (setq-hook! 'julia-mode-hook
+    lsp-enable-folding t
+    lsp-folding-range-limit 100))
+
+
+(use-package! eglot-jl
+  :when (featurep! +lsp)
+  :when (featurep! :tools lsp +eglot)
+  :after eglot
   :preface
-  (setq lsp-julia-default-environment "~/.julia/environments/v1.0")
-  (when (featurep! +lsp)
-    (add-hook 'julia-mode-local-vars-hook #'lsp!)))
+  ;; Prevent auto-install of LanguageServer.jl
+  (setq eglot-jl-language-server-project "~/.julia/environments/v1.0")
+  :init
+  ;; Prevent timeout while installing LanguageServer.jl
+  (setq-hook! 'julia-mode-hook eglot-connect-timeout (max eglot-connect-timeout 60))
+  :config (eglot-jl-init))

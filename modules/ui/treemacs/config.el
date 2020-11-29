@@ -26,9 +26,6 @@ This must be set before `treemacs' has loaded.")
         treemacs-persist-file (concat doom-cache-dir "treemacs-persist")
         treemacs-last-error-persist-file (concat doom-cache-dir "treemacs-last-error-persist"))
   :config
-  ;; Allow ace-window to target treemacs windows elsewhere
-  (after! ace-window
-    (delq! 'treemacs-mode aw-ignored-buffers))
   ;; ...but not from treemacs-visit-node-ace-* commands.
   (defadvice! +treemacs--ace-window-ignore-treemacs-buffer-a (orig-fn &rest args)
     :around '(treemacs-visit-node-ace
@@ -54,7 +51,10 @@ This must be set before `treemacs' has loaded.")
 
 (use-package! treemacs-evil
   :when (featurep! :editor evil +everywhere)
-  :after treemacs
+  :defer t
+  :init
+  (after! treemacs (require 'treemacs-evil))
+  (add-to-list 'doom-evil-state-alist '(?T . treemacs))
   :config
   (define-key! evil-treemacs-state-map
     [return] #'treemacs-RET-action
@@ -79,3 +79,7 @@ This must be set before `treemacs' has loaded.")
   :when (featurep! :ui workspaces)
   :after treemacs
   :config (treemacs-set-scope-type 'Perspectives))
+
+(use-package! lsp-treemacs
+  :when (featurep! +lsp)
+  :after (treemacs lsp))

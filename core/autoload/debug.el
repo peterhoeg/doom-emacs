@@ -5,7 +5,8 @@
 
 ;;;###autoload
 (defvar doom-debug-variables
-  '(debug-on-error
+  '(async-debug
+    debug-on-error
     doom-debug-p
     garbage-collection-messages
     gcmh-verbose
@@ -19,7 +20,6 @@
 Each entry can be a variable symbol or a cons cell whose CAR is the variable
 symbol and CDR is the value to set it to when `doom-debug-mode' is activated.")
 
-(defvar doom--debug-vars-old-values nil)
 (defvar doom--debug-vars-undefined nil)
 
 (defun doom--watch-debug-vars-h (&rest _)
@@ -39,14 +39,14 @@ symbol and CDR is the value to set it to when `doom-debug-mode' is activated.")
     (dolist (var doom-debug-variables)
       (cond ((listp var)
              (cl-destructuring-bind (var . val) var
-               (if (not (boundp var))
-                   (add-to-list 'doom--debug-vars-undefined var)
-                 (set-default
-                  var (if (not enabled)
-                          (alist-get var doom--debug-vars-old-values)
-                        (setf (alist-get var doom--debug-vars-old-values)
-                              (symbol-value var))
-                        val)))))
+               (if (boundp var)
+                   (set-default
+                    var (if (not enabled)
+                            (prog1 (get var 'initial-value)
+                              (put 'x 'initial-value nil))
+                          (put var 'initial-value (symbol-value var))
+                          val))
+                 (add-to-list 'doom--debug-vars-undefined var))))
             ((if (boundp var)
                  (set-default var enabled)
                (add-to-list 'doom--debug-vars-undefined var)))))
@@ -74,12 +74,13 @@ symbol and CDR is the value to set it to when `doom-debug-mode' is activated.")
 -q or -Q, for example:
 
   emacs -Q -l init.el -f doom-run-all-startup-hooks-h"
-  (run-hook-wrapped 'after-init-hook #'doom-try-run-hook)
   (setq after-init-time (current-time))
-  (mapc (doom-rpartial #'run-hook-wrapped #'doom-try-run-hook)
-        (list 'delayed-warnings-hook
-              'emacs-startup-hook 'tty-setup-hook
-              'window-setup-hook)))
+  (let ((inhibit-startup-hooks nil))
+    (doom-run-hooks 'after-init-hook
+                    'delayed-warnings-hook
+                    'emacs-startup-hook
+                    'tty-setup-hook
+                    'window-setup-hook)))
 
 
 ;;
@@ -90,7 +91,7 @@ symbol and CDR is the value to set it to when `doom-debug-mode' is activated.")
     (let (forms)
       (with-temp-buffer
         (insert-file-contents file)
-        (let (emacs-lisp-mode) (emacs-lisp-mode))
+        (let (emacs-lisp-mode-hook) (emacs-lisp-mode))
         (while (re-search-forward (format "(%s " (regexp-quote form)) nil t)
           (let ((ppss (syntax-ppss)))
             (unless (or (nth 4 ppss)
@@ -108,93 +109,112 @@ ready to be pasted in a bug report on github."
   (require 'core-packages)
   (let ((default-directory doom-emacs-dir))
     (letf! ((defun sh (&rest args) (cdr (apply #'doom-call-process args)))
+            (defun cat (file &optional limit)
+              (with-temp-buffer
+                (insert-file-contents file nil 0 limit)
+                (buffer-string)))
             (defun abbrev-path (path)
               (replace-regexp-in-string
-               (regexp-quote (user-login-name)) "$USER"
-               (abbreviate-file-name path))))
-      `((system
-         (type   . ,system-type)
-         (config . ,system-configuration)
-         (shell  . ,(abbrev-path shell-file-name))
-         (uname  . ,(if IS-WINDOWS "n/a" (sh "uname" "-msrv")))
-         (path   . ,(mapcar #'abbrev-path exec-path)))
-        (emacs
-         (dir       . ,(abbrev-path (file-truename doom-emacs-dir)))
-         (version   . ,emacs-version)
-         (build     . ,(format-time-string "%b %d, %Y" emacs-build-time))
-         (buildopts . ,system-configuration-options)
-         (features  . ,system-configuration-features)
-         (traits . ,(delq
-                     nil (list (if (not doom-interactive-p) 'batch)
-                               (if (daemonp) 'daemon)
-                               (if (and (require 'server)
-                                        (server-running-p))
-                                   'server-running)
-                               (if (boundp 'chemacs-profiles-path)
-                                   'chemacs)
-                               (if (file-exists-p doom-env-file)
-                                   'envvar-file)
-                               (if (featurep 'exec-path-from-shell)
-                                   'exec-path-from-shell)
-                               (if (file-symlink-p user-emacs-directory)
-                                   'symlinked-emacsdir)
-                               (if (file-symlink-p doom-private-dir)
-                                   'symlinked-doomdir)))))
-        (doom
-         (dir     . ,(abbrev-path (file-truename doom-private-dir)))
-         (version . ,doom-version)
-         (build   . ,(sh "git" "log" "-1" "--format=%D %h %ci"))
-         (elc-files
-          . ,(length (doom-files-in `(,@doom-modules-dirs
-                                      ,doom-core-dir
-                                      ,doom-private-dir)
-                                    :type 'files :match "\\.elc$")))
-         (modules
-          ,@(or (cl-loop with cat = nil
-                         for key being the hash-keys of doom-modules
-                         if (or (not cat)
-                                (not (eq cat (car key))))
-                         do (setq cat (car key))
-                         and collect cat
-                         collect
-                         (let* ((flags (doom-module-get cat (cdr key) :flags))
-                                (path  (doom-module-get cat (cdr key) :path))
-                                (module (append (cond ((null path)
-                                                       (list '&nopath))
-                                                      ((file-in-directory-p path doom-private-dir)
-                                                       (list '&user)))
-                                                (if flags
-                                                    `(,(cdr key) ,@flags)
-                                                  (list (cdr key))))))
-                           (if (= (length module) 1)
-                               (car module)
-                             module)))
-                '("n/a")))
-         (packages
-          ,@(or (condition-case e
-                    (mapcar
-                     #'cdr (doom--collect-forms-in
-                            (doom-path doom-private-dir "packages.el")
-                            "package!"))
-                  (error (format "<%S>" e)))
-                '("n/a")))
-         (unpin
-          ,@(or (condition-case e
-                    (mapcan #'identity
-                            (mapcar
-                             #'cdr (doom--collect-forms-in
-                                    (doom-path doom-private-dir "packages.el")
-                                    "unpin!")))
-                  (error (format "<%S>" e)))
-                '("n/a")))
-         (elpa
-          ,@(or (condition-case e
-                    (progn
-                      (package-initialize)
-                      (cl-loop for (name . _) in package-alist
-                               collect (format "%s" name)))
-                  (error (format "<%S>" e)))
-                '("n/a"))))))))
+               (regexp-opt (list (user-login-name)) 'words) "$USER"
+               (abbreviate-file-name path)))
+            (defun symlink-path (file)
+              (format "%s%s" (abbrev-path file)
+                      (if (file-symlink-p file) ""
+                        (concat " -> " (abbrev-path (file-truename file)))))))
+      `((generated . ,(format-time-string "%b %d, %Y %H:%M:%S"))
+        (system . ,(delq
+                    nil (list (doom-system-distro-version)
+                              (when (executable-find "uname")
+                                (sh "uname" "-msr"))
+                              (window-system))))
+        (emacs . ,(delq
+                   nil (list emacs-version
+                             (bound-and-true-p emacs-repository-branch)
+                             (and (stringp emacs-repository-version)
+                                  (substring emacs-repository-version 0 9))
+                             (symlink-path doom-emacs-dir))))
+        (doom . ,(list doom-version
+                       (sh "git" "log" "-1" "--format=%D %h %ci")
+                       (symlink-path doom-private-dir)))
+        (shell  . ,(abbrev-path shell-file-name))
+        (features . ,system-configuration-features)
+        (traits
+         . ,(mapcar
+             #'symbol-name
+             (delq
+              nil (list (cond ((not doom-interactive-p) 'batch)
+                              ((display-graphic-p) 'gui)
+                              ('tty))
+                        (if (daemonp) 'daemon)
+                        (if (and (require 'server)
+                                 (server-running-p))
+                            'server-running)
+                        (if (boundp 'chemacs-profiles-path)
+                            'chemacs)
+                        (if (file-exists-p doom-env-file)
+                            'envvar-file)
+                        (if (featurep 'exec-path-from-shell)
+                            'exec-path-from-shell)
+                        (if (file-symlink-p user-emacs-directory)
+                            'symlinked-emacsdir)
+                        (if (file-symlink-p doom-private-dir)
+                            'symlinked-doomdir)
+                        (if (and (stringp custom-file) (file-exists-p custom-file))
+                            'custom-file)
+                        (if (doom-files-in `(,@doom-modules-dirs
+                                             ,doom-core-dir
+                                             ,doom-private-dir)
+                                           :type 'files :match "\\.elc$")
+                            'byte-compiled-config)))))
+        (custom
+         ,@(when (and (stringp custom-file)
+                      (file-exists-p custom-file))
+             (cl-loop for (type var _) in (get 'user 'theme-settings)
+                      if (eq type 'theme-value)
+                      collect var)))
+        (modules
+         ,@(or (cl-loop with cat = nil
+                        for key being the hash-keys of doom-modules
+                        if (or (not cat)
+                               (not (eq cat (car key))))
+                        do (setq cat (car key))
+                        and collect cat
+                        collect
+                        (let* ((flags (doom-module-get cat (cdr key) :flags))
+                               (path  (doom-module-get cat (cdr key) :path))
+                               (module (append (cond ((null path)
+                                                      (list '&nopath))
+                                                     ((file-in-directory-p path doom-private-dir)
+                                                      (list '&user)))
+                                               (if flags
+                                                   `(,(cdr key) ,@flags)
+                                                 (list (cdr key))))))
+                          (if (= (length module) 1)
+                              (car module)
+                            module)))
+               '("n/a")))
+        (packages
+         ,@(condition-case e
+               (mapcar
+                #'cdr (doom--collect-forms-in
+                       (doom-path doom-private-dir "packages.el")
+                       "package!"))
+             (error (format "<%S>" e))))
+        (unpin
+         ,@(condition-case e
+               (mapcan #'identity
+                       (mapcar
+                        #'cdr (doom--collect-forms-in
+                               (doom-path doom-private-dir "packages.el")
+                               "unpin!")))
+             (error (list (format "<%S>" e)))))
+        (elpa
+         ,@(condition-case e
+               (progn
+                 (package-initialize)
+                 (cl-loop for (name . _) in package-alist
+                          collect (format "%s" name)))
+             (error (format "<%S>" e))))))))
 
 
 ;;
@@ -232,21 +252,23 @@ copies it to your clipboard, ready to be pasted into bug reports!"
                   (let ((sexp (prin1-to-string (sexp-at-point))))
                     (delete-region beg end)
                     (insert sexp))))))
-        (insert "```\n")
-        (dolist (group info)
-          (insert! "%-8s%-10s %s\n"
-                   ((upcase (symbol-name (car group)))
-                    (caadr group)
-                    (cdadr group)))
-          (dolist (spec (cddr group))
-            (insert! (indent 8 "%-10s %s\n")
-                     ((car spec) (cdr spec)))))
-        (insert "```\n"))
+        (dolist (spec info)
+          (when (cdr spec)
+            (insert! "%-11s  %s\n"
+                     ((car spec)
+                      (if (listp (cdr spec))
+                          (mapconcat (lambda (x) (format "%s" x))
+                                     (cdr spec) " ")
+                        (cdr spec)))))))
       (if (not doom-interactive-p)
           (print! (buffer-string))
-        (pop-to-buffer buffer)
-        (kill-new (buffer-string))
-        (print! (green "Copied your doom info to clipboard"))))))
+        (with-current-buffer (pop-to-buffer buffer)
+          (setq buffer-read-only t)
+          (goto-char (point-min))
+          (kill-new (buffer-string))
+          (when (y-or-n-p "Your doom-info was copied to the clipboard.\n\nOpen pastebin.com?")
+            (browse-url "https://pastebin.com")))))))
+
 
 ;;;###autoload
 (defun doom/am-i-secure ()
@@ -304,151 +326,22 @@ Some items are not supported by the `nsm.el' module."
 
 
 ;;
-;;; Vanilla sandbox
-
-(defun doom--run-sandbox (&optional mode)
-  (interactive)
-  (let ((contents (buffer-string))
-        (file (make-temp-file "doom-sandbox-")))
-    (require 'package)
-    (with-temp-file file
-      (prin1 `(progn
-                (setq noninteractive nil
-                      user-init-file ,file
-                      process-environment ',doom--initial-process-environment
-                      exec-path ',doom--initial-exec-path
-                      init-file-debug t
-                      doom--initial-load-path load-path
-                      load-path ',load-path
-                      package--init-file-ensured t
-                      package-user-dir ,package-user-dir
-                      package-archives ',package-archives
-                      user-emacs-directory ,doom-emacs-dir
-                      comp-deferred-compilation nil
-                      comp-eln-load-path ',(bound-and-true-p comp-eln-load-path)
-                      comp-async-env-modifier-form ',(bound-and-true-p comp-async-env-modifier-form)
-                      comp-deferred-compilation-black-list ',(bound-and-true-p comp-deferred-compilation-black-list))
-                (with-eval-after-load 'undo-tree
-                  ;; undo-tree throws errors because `buffer-undo-tree' isn't
-                  ;; correctly initialized
-                  (setq-default buffer-undo-tree (make-undo-tree)))
-                (ignore-errors
-                  (delete-directory ,(expand-file-name "auto-save-list" doom-emacs-dir) 'parents)))
-             (current-buffer))
-      (prin1 `(unwind-protect
-                  (defun --run-- () ,(read (concat "(progn\n" contents "\n)")))
-                (delete-file ,file))
-             (current-buffer))
-      (prin1 (pcase mode
-               (`vanilla-doom+ ; Doom core + modules - private config
-                `(progn
-                   (load-file ,(expand-file-name "core.el" doom-core-dir))
-                   (setq doom-modules-dirs (list doom-modules-dir))
-                   (let ((doom-init-modules-p t))
-                     (doom-initialize)
-                     (doom-initialize-core-modules))
-                   (setq doom-modules ',doom-modules)
-                   (maphash (lambda (key plist)
-                              (doom-module-put
-                               (car key) (cdr key)
-                               :path (doom-module-locate-path (car key) (cdr key))))
-                            doom-modules)
-                   (--run--)
-                   (maphash (doom-module-loader doom-module-init-file) doom-modules)
-                   (maphash (doom-module-loader doom-module-config-file) doom-modules)
-                   (run-hook-wrapped 'doom-init-modules-hook #'doom-try-run-hook)
-                   (doom-run-all-startup-hooks-h)))
-               (`vanilla-doom  ; only Doom core
-                `(progn
-                   (load-file ,(expand-file-name "core.el" doom-core-dir))
-                   (let ((doom-init-modules-p t))
-                     (doom-initialize)
-                     (doom-initialize-core-modules))
-                   (--run--)
-                   (doom-run-all-startup-hooks-h)))
-               (`vanilla       ; nothing loaded
-                `(progn
-                   (package-initialize)
-                   (--run--))))
-             (current-buffer)))
-    (let ((args (if (eq mode 'doom)
-                    (list "-l" file)
-                  (list "-Q" "-l" file))))
-      (require 'restart-emacs)
-      (condition-case e
-          (cond ((display-graphic-p)
-                 (if (memq system-type '(windows-nt ms-dos))
-                     (restart-emacs--start-gui-on-windows args)
-                   (restart-emacs--start-gui-using-sh args)))
-                ((memq system-type '(windows-nt ms-dos))
-                 (user-error "Cannot start another Emacs from Windows shell."))
-                ((suspend-emacs
-                  (format "%s %s -nw; fg"
-                          (shell-quote-argument (restart-emacs--get-emacs-binary))
-                          (mapconcat #'shell-quote-argument args " ")))))
-        (error
-         (delete-file file)
-         (signal (car e) (cdr e)))))))
-
-(fset 'doom--run-vanilla-emacs (cmd! (doom--run-sandbox 'vanilla)))
-(fset 'doom--run-vanilla-doom  (cmd! (doom--run-sandbox 'vanilla-doom)))
-(fset 'doom--run-vanilla-doom+ (cmd! (doom--run-sandbox 'vanilla-doom+)))
-(fset 'doom--run-full-doom     (cmd! (doom--run-sandbox 'doom)))
-
-(defvar doom-sandbox-emacs-lisp-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'doom--run-vanilla-emacs)
-    (define-key map (kbd "C-c C-d") #'doom--run-vanilla-doom)
-    (define-key map (kbd "C-c C-p") #'doom--run-vanilla-doom+)
-    (define-key map (kbd "C-c C-f") #'doom--run-full-doom)
-    (define-key map (kbd "C-c C-k") #'kill-current-buffer)
-    map))
-
-(define-derived-mode doom-sandbox-emacs-lisp-mode emacs-lisp-mode "Sandbox Elisp"
-  "TODO")
-
-;;;###autoload
-(defun doom/sandbox ()
-  "Open the Emacs Lisp sandbox.
-
-This is a test bed for running Emacs Lisp in another instance of Emacs with
-varying amounts of Doom loaded, including:
-
-  a) vanilla Emacs (nothing loaded),
-  b) vanilla Doom (only Doom core),
-  c) Doom + modules - your private config or
-  c) Doom + modules + your private config (a complete Doom session)
-
-This is done without sacrificing access to installed packages. Use the sandbox
-to reproduce bugs and determine if Doom is to blame."
-  (interactive)
-  (let* ((buffer-name "*doom:sandbox*")
-         (exists (get-buffer buffer-name))
-         (buf (get-buffer-create buffer-name)))
-    (with-current-buffer buf
-      (doom-sandbox-emacs-lisp-mode)
-      (setq-local default-directory doom-emacs-dir)
-      (unless (buffer-live-p exists)
-        (insert-file-contents (doom-glob doom-core-dir "templates/VANILLA_SANDBOX"))
-        (let ((contents (substitute-command-keys (buffer-string))))
-          (erase-buffer)
-          (insert contents "\n")))
-      (goto-char (point-max)))
-    (pop-to-buffer buf)))
-
-
-;;
 ;;; Reporting bugs
 
 ;;;###autoload
-(defun doom/report-bug ()
-  "Open a markdown buffer destinated to populate the New Issue page on Doom
-Emacs' issue tracker.
-
-If called when a backtrace buffer is present, it and the output of `doom-info'
-will be automatically appended to the result."
-  (interactive)
-  (browse-url "https://github.com/hlissner/doom-emacs/issues/new/choose"))
+(defun doom/copy-buffer-contents (buffer-name)
+  "Copy the contents of BUFFER-NAME to your clipboard."
+  (interactive
+   (list (if current-prefix-arg
+             (completing-read "Select buffer: " (mapcar #'buffer-name (buffer-list)))
+           (buffer-name (current-buffer)))))
+  (let ((buffer (get-buffer buffer-name)))
+    (unless (buffer-live-p buffer)
+      (user-error "Buffer isn't live"))
+    (kill-new
+     (with-current-buffer buffer
+       (substring-no-properties (buffer-string))))
+    (message "Contents of %S were copied to the clipboard" buffer-name)))
 
 
 ;;

@@ -87,7 +87,7 @@ string starting with the character contained in car.
 This variable is used only if you built Emacs with Harfbuzz on a version >= 28")
 
 (defvar +ligatures-in-modes
-  '(not special-mode comint-mode eshell-mode term-mode vterm-mode)
+  '(not special-mode comint-mode eshell-mode term-mode vterm-mode Info-mode)
   "List of major modes where ligatures should be enabled.
 
   If t, enable it everywhere (except `fundamental-mode').
@@ -137,17 +137,24 @@ with `prettify-symbols-mode'. This variable controls where these are enabled.
 See `+ligatures-extras-in-modes' to control what major modes this function can
 and cannot run in."
   (when after-init-time
-    (when (+ligatures--enable-p +ligatures-in-modes)
-      (if (boundp '+ligature--composition-table)
-          (setq-local composition-function-table +ligature--composition-table)
-        (run-hooks '+ligatures--init-font-hook)
-        (setq +ligatures--init-font-hook nil)))
-    (when (and (featurep! +extra)
-               (+ligatures--enable-p +ligatures-extras-in-modes))
-      (prependq! prettify-symbols-alist (alist-get major-mode +ligatures-extra-alist)))
-    (when prettify-symbols-alist
-      (if prettify-symbols-mode (prettify-symbols-mode -1))
-      (prettify-symbols-mode +1))))
+    (let ((in-mode-p
+           (+ligatures--enable-p +ligatures-in-modes))
+          (in-mode-extras-p
+           (and (featurep! +extra)
+                (+ligatures--enable-p +ligatures-extras-in-modes))))
+      (when in-mode-p
+        (if (boundp '+ligature--composition-table)
+            (setq-local composition-function-table +ligature--composition-table)
+          (run-hooks '+ligatures--init-font-hook)
+          (setq +ligatures--init-font-hook nil)))
+      (when in-mode-extras-p
+        (prependq! prettify-symbols-alist
+                   (alist-get major-mode +ligatures-extra-alist)))
+      (when (and (or in-mode-p in-mode-extras-p)
+                 prettify-symbols-alist)
+        (when prettify-symbols-mode
+          (prettify-symbols-mode -1))
+        (prettify-symbols-mode +1)))))
 
 
 ;;
@@ -181,7 +188,7 @@ and cannot run in."
       (dolist (char-regexp +ligatures-composition-alist)
         (set-char-table-range
          +ligature--composition-table
-         (car char-regexp) `([,(cdr char-regexp) 0 font-shape-gstring])))
+         (car char-regexp) `([,(concat "." (cdr char-regexp)) 0 font-shape-gstring])))
       (set-char-table-parent +ligature--composition-table composition-function-table))))
 
  ;; Fallback ligature support for certain, patched fonts. Install them with

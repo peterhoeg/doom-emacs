@@ -21,7 +21,8 @@ the buffer is visible, then set another timer and try again later."
                (let ((kill-buffer-hook (remq '+popup-kill-buffer-hook-h kill-buffer-hook))
                      confirm-kill-processes)
                  (when-let (process (get-buffer-process buffer))
-                   (kill-process process))
+                   (when (eq (process-type process) 'real)
+                     (kill-process process)))
                  (let (kill-buffer-query-functions)
                    ;; HACK The debugger backtrace buffer, when killed, called
                    ;;      `top-level'. This causes jumpiness when the popup
@@ -45,7 +46,9 @@ the buffer is visible, then set another timer and try again later."
 + And finally deletes the window!"
   (let ((buffer (window-buffer window))
         (inhibit-quit t))
-    (and (buffer-file-name buffer)
+    (and (or (buffer-file-name buffer)
+             (if-let (base-buffer (buffer-base-buffer buffer))
+                 (buffer-file-name base-buffer)))
          (buffer-modified-p buffer)
          (let ((autosave (+popup-parameter 'autosave window)))
            (cond ((eq autosave 't))

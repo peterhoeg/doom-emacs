@@ -163,18 +163,20 @@ This can be passed nil as its second argument to unset handlers for MODES. e.g.
                   (+lookup--run-handlers handler identifier origin)
                 (user-error "No lookup handler selected"))
             (run-hook-wrapped handlers #'+lookup--run-handlers identifier origin))))
-    (when (cond ((null result)
-                 (message "No lookup handler could find %S" identifier)
-                 nil)
-                ((markerp result)
-                 (funcall (or display-fn #'switch-to-buffer)
-                          (marker-buffer result))
-                 (goto-char result)
-                 result)
-                (result))
-      (with-current-buffer (marker-buffer origin)
-        (better-jumper-set-jump (marker-position origin)))
-      result)))
+    (unwind-protect
+        (when (cond ((null result)
+                     (message "No lookup handler could find %S" identifier)
+                     nil)
+                    ((markerp result)
+                     (funcall (or display-fn #'switch-to-buffer)
+                              (marker-buffer result))
+                     (goto-char result)
+                     result)
+                    (result))
+          (with-current-buffer (marker-buffer origin)
+            (better-jumper-set-jump (marker-position origin)))
+          result)
+      (set-marker origin nil))))
 
 
 ;;
@@ -186,12 +188,15 @@ This can be passed nil as its second argument to unset handlers for MODES. e.g.
                         (xref-find-backend)
                         identifier)))
     (when xrefs
-      (funcall (or show-fn #'xref--show-defs)
-               (lambda () xrefs)
-               nil)
-      (if (cdr xrefs)
-          'deferred
-        t))))
+      (let ((marker-ring (ring-copy xref--marker-ring)))
+        (funcall (or show-fn #'xref--show-defs)
+                 (lambda () xrefs)
+                 nil)
+        (if (cdr xrefs)
+            'deferred
+          ;; xref will modify its marker stack when it finds a result to jump to.
+          ;; Use that to determine success.
+          (not (equal xref--marker-ring marker-ring)))))))
 
 (defun +lookup-dictionary-definition-backend-fn (identifier)
   "Look up dictionary definition for IDENTIFIER."
@@ -207,11 +212,15 @@ This can be passed nil as its second argument to unset handlers for MODES. e.g.
 
 (defun +lookup-xref-definitions-backend-fn (identifier)
   "Non-interactive wrapper for `xref-find-definitions'"
-  (+lookup--xref-show 'xref-backend-definitions identifier #'xref--show-defs))
+  (condition-case _
+      (+lookup--xref-show 'xref-backend-definitions identifier #'xref--show-defs)
+    (cl-no-applicable-method nil)))
 
 (defun +lookup-xref-references-backend-fn (identifier)
   "Non-interactive wrapper for `xref-find-references'"
-  (+lookup--xref-show 'xref-backend-references identifier #'xref--show-xrefs))
+  (condition-case _
+      (+lookup--xref-show 'xref-backend-references identifier #'xref--show-xrefs)
+    (cl-no-applicable-method nil)))
 
 (defun +lookup-dumb-jump-backend-fn (_identifier)
   "Look up the symbol at point (or selection) with `dumb-jump', which conducts a
@@ -249,30 +258,54 @@ current buffer."
           (not (and (>= pt beg)
                     (<  pt end))))))))
 
-(defun +lookup-ffap-backend-fn (_identifier)
-  "Uses `find-file-at-point' to read file at point."
-  (require 'ffap)
-  (when (ffap-guesser)
-    (find-file-at-point)))
+(defun +lookup-ffap-backend-fn (identifier)
+  "Tries to locate the file at point (or in active selection).
+Uses find-in-project functionality (provided by ivy, helm, or project),
+otherwise falling back to ffap.el (find-file-at-point)."
+  (let ((guess
+         (cond (identifier)
+               ((doom-region-active-p)
+                (buffer-substring-no-properties
+                 (doom-region-beginning)
+                 (doom-region-end)))
+               ((if (require 'ffap) (ffap-guesser)))
+               ((thing-at-point 'filename t)))))
+    (cond ((and (stringp guess)
+                (or (file-exists-p guess)
+                    (ffap-url-p guess)))
+           (find-file-at-point guess))
+          ((and (featurep! :completion ivy)
+                (doom-project-p))
+           (counsel-file-jump guess (doom-project-root)))
+          ((find-file-at-point (ffap-prompter guess))))
+    t))
 
 (defun +lookup-bug-reference-backend-fn (_identifier)
   "Searches for a bug reference in user/repo#123 or #123 format and opens it in
 the browser."
   (require 'bug-reference)
-  (let ((bug-reference-url-format bug-reference-url-format)
-        (bug-reference-bug-regexp bug-reference-bug-regexp)
-        (bug-reference-mode (derived-mode-p 'text-mode 'conf-mode))
-        (bug-reference-prog-mode (derived-mode-p 'prog-mode)))
-    (bug-reference--run-auto-setup)
-    (unwind-protect
-        (catch 'found
-          (bug-reference-fontify (line-beginning-position) (line-end-position))
-          (dolist (o (overlays-at (point)))
-            ;; It should only be possible to have one URL overlay.
-            (when-let (url (overlay-get o 'bug-reference-url))
-              (browse-url url)
-              (throw 'found t))))
-      (bug-reference-unfontify (line-beginning-position) (line-end-position)))))
+  (when (fboundp 'bug-reference-try-setup-from-vc)
+    (let ((old-bug-reference-mode bug-reference-mode)
+          (old-bug-reference-prog-mode bug-reference-prog-mode)
+          (bug-reference-url-format bug-reference-url-format)
+          (bug-reference-bug-regexp bug-reference-bug-regexp))
+      (bug-reference-try-setup-from-vc)
+      (unwind-protect
+          (let ((bug-reference-mode t)
+                (bug-reference-prog-mode nil))
+            (catch 'found
+              (bug-reference-fontify (line-beginning-position) (line-end-position))
+              (dolist (o (overlays-at (point)))
+                ;; It should only be possible to have one URL overlay.
+                (when-let (url (overlay-get o 'bug-reference-url))
+                  (browse-url url)
+
+                  (throw 'found t)))))
+        ;; Restore any messed up fontification as a result of this.
+        (bug-reference-unfontify (line-beginning-position) (line-end-position))
+        (if (or old-bug-reference-mode
+                old-bug-reference-prog-mode)
+            (bug-reference-fontify (line-beginning-position) (line-end-position)))))))
 
 
 ;;
@@ -341,7 +374,6 @@ for the current mode/buffer (if any), then falls back to the backends in
   (cond ((+lookup--jump-to :documentation identifier #'pop-to-buffer arg))
         ((user-error "Couldn't find documentation for %S" identifier))))
 
-(defvar ffap-file-finder)
 ;;;###autoload
 (defun +lookup/file (&optional path)
   "Figure out PATH from whatever is at point and open it.
@@ -358,9 +390,7 @@ Otherwise, falls back on `find-file-at-point'."
 
         ((+lookup--jump-to :file path))
 
-        ((stringp path) (find-file-at-point path))
-
-        ((call-interactively #'find-file-at-point))))
+        ((user-error "Couldn't find any files here"))))
 
 
 ;;

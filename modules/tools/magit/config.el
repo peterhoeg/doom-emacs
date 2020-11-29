@@ -4,6 +4,14 @@
   "What direction to open new windows from the status buffer.
 For example, diffs and log buffers. Accepts `left', `right', `up', and `down'.")
 
+(defvar +magit-fringe-size 14
+  "Size of the fringe in magit-mode buffers.
+
+Can be an integer or a cons cell whose CAR and CDR are integer widths for the
+left and right fringe.
+
+Only has an effect in GUI Emacs.")
+
 
 ;;
 ;;; Packages
@@ -56,9 +64,9 @@ For example, diffs and log buffers. Accepts `left', `right', `up', and `down'.")
                          "~/.cache/")
                      "git/credential/socket")))
 
-  ;; Prevent scrolling when manipulating magit-status hunks. Otherwise you must
-  ;; reorient yourself every time you stage/unstage/discard/etc a hunk.
-  ;; Especially so on larger projects."
+  ;; Prevent sudden window position resets when staging/unstaging/discarding/etc
+  ;; hunks in `magit-status-mode' buffers. It's disorienting, especially on
+  ;; larger projects.
   (defvar +magit--pos nil)
   (add-hook! 'magit-pre-refresh-hook
     (defun +magit--set-window-state-h ()
@@ -100,10 +108,22 @@ For example, diffs and log buffers. Accepts `left', `right', `up', and `down'.")
 
   ;; Clean up after magit by killing leftover magit buffers and reverting
   ;; affected buffers (or at least marking them as need-to-be-reverted).
-  (define-key magit-status-mode-map [remap magit-mode-bury-buffer] #'+magit/quit)
+  (define-key magit-mode-map "q" #'+magit/quit)
+  (define-key magit-mode-map "Q" #'+magit/quit-all)
 
   ;; Close transient with ESC
   (define-key transient-map [escape] #'transient-quit-one)
+
+  (add-hook! 'magit-mode-hook
+    (add-hook! 'window-configuration-change-hook :local
+      (defun +magit-enlargen-fringe-h ()
+        "Make fringe larger in magit."
+        (and (display-graphic-p)
+             (derived-mode-p 'magit-mode)
+             +magit-fringe-size
+             (let ((left  (or (car-safe +magit-fringe-size) +magit-fringe-size))
+                   (right (or (cdr-safe +magit-fringe-size) +magit-fringe-size)))
+               (set-window-fringes nil left right))))))
 
   ;; An optimization that particularly affects macOS and Windows users: by
   ;; resolving `magit-git-executable' Emacs does less work to find the
@@ -113,7 +133,15 @@ For example, diffs and log buffers. Accepts `left', `right', `up', and `down'.")
   (add-hook! 'magit-status-mode-hook
     (defun +magit-optimize-process-calls-h ()
       (when-let (path (executable-find magit-git-executable t))
-        (setq-local magit-git-executable path)))))
+        (setq-local magit-git-executable path))))
+
+  (add-hook! 'magit-diff-visit-file-hook
+    (defun +magit-reveal-point-if-invisible-h ()
+      "Reveal the point if in an invisible region."
+      (if (derived-mode-p 'org-mode)
+          (org-reveal '(4))
+        (require 'reveal)
+        (reveal-post-command)))))
 
 
 (use-package! forge
@@ -180,19 +208,21 @@ ensure it is built when we actually use Forge."
   :hook (magit-mode . turn-on-magit-gitflow))
 
 
-(use-package! evil-magit
+(use-package! evil-collection-magit
   :when (featurep! :editor evil +everywhere)
-  :after magit
-  :init
-  (setq evil-magit-state 'normal
-        evil-magit-use-z-for-folds t)
+  :defer t
+  :init (defvar evil-collection-magit-use-z-for-folds t)
   :config
-  (undefine-key! magit-mode-map
-    ;; Replaced by z1, z2, z3, etc
-    "M-1" "M-2" "M-3" "M-4"
-    "1" "2" "3" "4"
-    "0") ; moved to g=
-  (evil-define-key* 'normal magit-status-mode-map [escape] nil) ; q is enough
+  ;; These numbered keys mask the numerical prefix keys. Since they've already
+  ;; been replaced with z1, z2, z3, etc (and 0 with g=), there's no need to keep
+  ;; them around:
+  (undefine-key! magit-mode-map "M-1" "M-2" "M-3" "M-4" "1" "2" "3" "4" "0")
+
+  ;; q is enough; ESC is way too easy for a vimmer to accidentally press,
+  ;; especially when traversing modes in magit buffers.
+  (evil-define-key* 'normal magit-status-mode-map [escape] nil)
+
+  ;; Some extra vim-isms I thought were missing from upstream
   (evil-define-key* '(normal visual) magit-mode-map
     "%"  #'magit-gitflow-popup
     "zt" #'evil-scroll-line-to-top
@@ -201,20 +231,42 @@ ensure it is built when we actually use Forge."
     "g=" #'magit-diff-default-context
     "gi" #'forge-jump-to-issues
     "gm" #'forge-jump-to-pullreqs)
+
+  ;; Fix these keybinds because they are blacklisted
+  ;; REVIEW There must be a better way to exclude particular evil-collection
+  ;;        modules from the blacklist.
+  (map! (:map magit-mode-map
+         :nv "q" #'+magit/quit
+         :nv "Q" #'+magit/quit-all
+         :nv "]" #'magit-section-forward-sibling
+         :nv "[" #'magit-section-backward-sibling
+         :nv "gr" #'magit-refresh
+         :nv "gR" #'magit-refresh-all)
+        (:map magit-status-mode-map
+         :nv "gz" #'magit-refresh)
+        (:map magit-diff-mode-map
+         :nv "gd" #'magit-jump-to-diffstat-or-diff))
+
+  ;; A more intuitive behavior for TAB in magit buffers:
   (define-key! 'normal
     (magit-status-mode-map
      magit-stash-mode-map
      magit-revision-mode-map
+     magit-process-mode-map
      magit-diff-mode-map)
     [tab] #'magit-section-toggle)
+
   (after! git-rebase
     (dolist (key '(("M-k" . "gk") ("M-j" . "gj")))
-      (when-let (desc (assoc (car key) evil-magit-rebase-commands-w-descriptions))
+      (when-let (desc (assoc (car key) evil-collection-magit-rebase-commands-w-descriptions))
         (setcar desc (cdr key))))
-    (evil-define-key* evil-magit-state git-rebase-mode-map
+    (evil-define-key* evil-collection-magit-state git-rebase-mode-map
       "gj" #'git-rebase-move-line-down
       "gk" #'git-rebase-move-line-up))
-  (transient-replace-suffix 'magit-dispatch 'magit-worktree
-    '("%" "Gitflow" magit-gitflow-popup))
+
+  (after! magit-gitflow
+    (transient-replace-suffix 'magit-dispatch 'magit-worktree
+      '("%" "Gitflow" magit-gitflow-popup)))
+
   (transient-append-suffix 'magit-dispatch '(0 -1 -1)
     '("*" "Worktree" magit-worktree)))

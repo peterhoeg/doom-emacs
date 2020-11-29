@@ -13,7 +13,7 @@
     (realgud:trepan2   :modes (python-mode))
     (realgud:trepan3k  :modes (python-mode))
     (realgud:trepanjs  :modes (javascript-mode js2-mode js3-mode))
-    (realgud:trepanpl  :modes (perl-mode perl6-mode))
+    (realgud:trepanpl  :modes (perl-mode perl6-mode raku-mode))
     (realgud:zshdb     :modes (sh-mode))))
 
 (defvar +debugger--dap-alist
@@ -38,6 +38,12 @@
 (setq gdb-show-main t
       gdb-many-windows t)
 
+(use-package! projectile-variable
+  :defer t
+  :commands (projectile-variable-put
+             projectile-variable-get
+             projectile-variable-alist
+             projectile-variable-plist))
 
 (use-package! realgud
   :defer t
@@ -121,9 +127,10 @@
 
   (define-minor-mode +dap-running-session-mode
     "A mode for adding keybindings to running sessions"
-    nil nil (make-sparse-keymap)
+    :init-value nil
+    :keymap (make-sparse-keymap)
     (when (bound-and-true-p evil-mode)
-    (evil-normalize-keymaps))  ; if you use evil, this is necessary to update the keymaps
+      (evil-normalize-keymaps))  ; if you use evil, this is necessary to update the keymaps
     ;; The following code adds to the dap-terminated-hook so that this minor
     ;; mode will be deactivated when the debugger finishes
     (when +dap-running-session-mode

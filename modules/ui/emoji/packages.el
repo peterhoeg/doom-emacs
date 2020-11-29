@@ -1,4 +1,4 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; ui/emoji/packages.el
 
-(package! emojify :pin "d886069974d05c8c15654204f9afeaee962f3e7d")
+(package! emojify :pin "1b726412f19896abf5e4857d4c32220e33400b55")

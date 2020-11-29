@@ -26,6 +26,26 @@ employed so that flycheck still does *some* helpful linting.")
 
 (use-package! elisp-mode
   :mode ("\\.Cask\\'" . emacs-lisp-mode)
+  :init
+  ;; Instead of pestering the user about accepting unsafe file local variables,
+  ;; I'd rather it quietly ignore them...
+  (setq-default enable-local-variables :safe)
+  ;; ...but still log them, so we can discover them if we're looking for it.
+  (defadvice! +emacs-lisp-log-unsafe-local-variables-a (variables dir-name)
+    :before #'hack-local-variables-filter
+    (when (eq enable-local-variables :safe)
+      (pcase-dolist (`(,var . ,val) variables)
+        (cond ((memq var ignored-local-variables))
+              ((memq var '(mode unibyte coding)))
+              ((eq var 'eval)
+               (and enable-local-eval
+                    (not (or (hack-one-local-variable-eval-safep val)
+                             (safe-local-variable-p var val)))
+                    (message "Ignoring unsafe form in file local variable: %S" val)))
+              ((not (safe-local-variable-p var val))
+               (message "Ignoring unsafe file local variable: %S" var))
+              ((get var 'risky-local-variable)
+               (message "Ignoring risky file local variable: %S" var))))))
   :config
   (set-repl-handler! '(emacs-lisp-mode lisp-interaction-mode) #'+emacs-lisp/open-repl)
   (set-eval-handler! '(emacs-lisp-mode lisp-interaction-mode) #'+emacs-lisp-eval)
@@ -99,15 +119,17 @@ employed so that flycheck still does *some* helpful linting.")
     "Display variable value next to documentation in eldoc."
     :around #'elisp-get-var-docstring
     (when-let (ret (funcall orig-fn sym))
-      (concat ret " "
-              (let* ((truncated " [...]")
-                     (print-escape-newlines t)
-                     (str (symbol-value sym))
-                     (str (prin1-to-string str))
-                     (limit (- (frame-width) (length ret) (length truncated) 1)))
-                (format (format "%%0.%ds%%s" limit)
-                        (propertize str 'face 'warning)
-                        (if (< (length str) limit) "" truncated))))))
+      (if (boundp sym)
+          (concat ret " "
+                  (let* ((truncated " [...]")
+                         (print-escape-newlines t)
+                         (str (symbol-value sym))
+                         (str (prin1-to-string str))
+                         (limit (- (frame-width) (length ret) (length truncated) 1)))
+                    (format (format "%%0.%ds%%s" (max limit 0))
+                            (propertize str 'face 'warning)
+                            (if (< (length str) limit) "" truncated))))
+        ret)))
 
   (map! :localleader
         :map emacs-lisp-mode-map
@@ -181,12 +203,12 @@ employed so that flycheck still does *some* helpful linting.")
     "Add Doom's own demos to help buffers."
     :around #'elisp-demos--search
     (or (funcall orig-fn symbol)
-        (when-let (demos-file (doom-glob doom-docs-dir "api.org"))
+        (when-let (demos-file (doom-module-locate-path :lang 'emacs-lisp "demos.org"))
           (with-temp-buffer
             (insert-file-contents demos-file)
             (goto-char (point-min))
             (when (re-search-forward
-                   (format "^\\*\\*\\* %s$" (regexp-quote (symbol-name symbol)))
+                   (format "^\\*\\* %s$" (regexp-quote (symbol-name symbol)))
                    nil t)
               (let (beg end)
                 (forward-line 1)

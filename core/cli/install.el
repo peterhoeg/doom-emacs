@@ -18,10 +18,9 @@ This command does the following:
 
 This command is idempotent and safe to reuse.
 
-The location of DOOMDIR can be changed with the -p option, or by setting the
-DOOMDIR environment variable. e.g.
+The location of DOOMDIR can be changed with the environment variable of the same
+name. e.g.
 
-  doom -p ~/.config/doom install
   DOOMDIR=~/.config/doom doom install"
   (print! (green "Installing Doom Emacs!\n"))
   (let ((default-directory (doom-path "~")))
@@ -96,5 +95,5 @@ DOOMDIR environment variable. e.g.
 
     (print! (success "\nFinished! Doom is ready to go!\n"))
     (with-temp-buffer
-      (insert-file-contents (doom-glob doom-core-dir "templates/QUICKSTART_INTRO"))
+      (insert-file-contents (doom-path doom-core-dir "templates/QUICKSTART_INTRO"))
       (print! "%s" (buffer-string)))))
